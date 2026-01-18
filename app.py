@@ -3,16 +3,57 @@ import yaml
 import pandas as pd
 from datetime import datetime
 from github import Github
-import json
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Git Life Logger", page_icon="📓")
+st.set_page_config(page_title="Git Life Logger", page_icon="🔒")
+
+# --- SISTEMA DI AUTENTICAZIONE ---
+def check_password():
+    """Ritorna True se l'utente ha inserito la password corretta."""
+
+    def password_entered():
+        """Controlla se la password inserita corrisponde a quella nei segreti."""
+        if st.session_state["password"] == st.secrets["PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Pulisce la password dalla memoria per sicurezza
+        else:
+            st.session_state["password_correct"] = False
+
+    # Se la password è già stata verificata in questa sessione
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Interfaccia di Login
+    st.title("🔒 Login Richiesto")
+    st.text_input(
+        "Inserisci la password per accedere al Logger:", 
+        type="password", 
+        on_change=password_entered, 
+        key="password"
+    )
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("😕 Password errata.")
+
+    return False
+
+# --- BLOCCO DI SICUREZZA ---
+if not check_password():
+    st.stop()  # FERMA TUTTO QUI se non sei loggato. Niente sotto viene eseguito.
+
+# =========================================================
+# DA QUI IN GIÙ INCOLLA IL RESTO DEL TUO VECCHIO CODICE
+# =========================================================
+
 st.title("📓 Git Life Logger")
 
-# Recupera i segreti (configurati su Streamlit Cloud)
+# Recupera i segreti 
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
-REPO_NAME = st.secrets["REPO_NAME"] # Es: "tuonome/life-logger"
+REPO_NAME = st.secrets["REPO_NAME"]
 FILE_PATH = "data.yaml"
+
+# ... (tutto il resto delle funzioni get_github_file, load_data, save_to_github, interfaccia, etc.)
+# ...
 
 # --- GESTIONE GITHUB ---
 def get_github_file():
