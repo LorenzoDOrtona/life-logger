@@ -18,23 +18,39 @@ class GitHubBackend:
             self._repo = self.github.get_repo(self.repo_name)
         return self._repo
 
+    # In modules/backend.py
+
     def load_data(self) -> pd.DataFrame:
         """Scarica e parsa il YAML in DataFrame."""
+        # Colonne che DEVONO esistere sempre
+        EXPECTED_COLS = ["timestamp", "activity_type", "note", "dettaglio", "metrica", "unita"]
+        
         try:
             contents = self.repo.get_contents(self.file_path)
             yaml_content = contents.decoded_content.decode("utf-8")
             data = yaml.safe_load(yaml_content)
-            if not data: return pd.DataFrame()
+            
+            # SE IL FILE È VUOTO O NULL
+            if not data: 
+                return pd.DataFrame(columns=EXPECTED_COLS)
             
             df = pd.DataFrame(data)
-            # Converte timestamp in datetime vero per facilitare i calcoli dopo
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-            return df
-        except Exception as e:
-            # Se il file non esiste o è vuoto
-            return pd.DataFrame()
+            
+            # SE IL FILE ESISTE MA MANCANO COLONNE (es. dati vecchi)
+            # Aggiunge le colonne mancanti riempiendole con None
+            for col in EXPECTED_COLS:
+                if col not in df.columns:
+                    df[col] = None
 
+            # Converte timestamp in datetime
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                
+            return df
+            
+        except Exception as e:
+            # Se il file non esiste proprio su GitHub
+            return pd.DataFrame(columns=EXPECTED_COLS)
     def save_entry(self, entry: dict):
         """Aggiunge una entry e fa commit su GitHub."""
         try:
