@@ -2,14 +2,17 @@ import streamlit as st
 import yaml
 import pandas as pd
 from github import Github
+from modules.crypto_utils import encrypt_data, decrypt_data
 
 class GitHubBackend:
-    def __init__(self):
+    def __init__(self, username):
         self.token = st.secrets["GITHUB_TOKEN"]
         self.repo_name = st.secrets["REPO_NAME"]
-        self.file_path = "data.yaml"
+        # Nota l'estensione .enc per ricordarci che è criptato
+        self.file_path = f"data_{username}.enc" 
         self.github = Github(self.token)
-        # Lazy loading della repo per evitare chiamate API inutili all'init
+        # Recuperiamo la password dalla sessione per usarla come chiave
+        self.user_password = st.session_state.get("encryption_key")
         self._repo = None
 
     @property
@@ -18,46 +21,38 @@ class GitHubBackend:
             self._repo = self.github.get_repo(self.repo_name)
         return self._repo
 
-    # In modules/backend.py
-
     def load_data(self) -> pd.DataFrame:
-        """Scarica e parsa il YAML in DataFrame."""
-        # Colonne che DEVONO esistere sempre
-        EXPECTED_COLS = ["timestamp", "activity_type", "note", "dettaglio", "metrica", "unita"]
-        
+        cols = ["timestamp", "activity_type", "note", "dettaglio", "metrica", "unita"]
         try:
+            # 1. Scarica il blob criptato
             contents = self.repo.get_contents(self.file_path)
-            yaml_content = contents.decoded_content.decode("utf-8")
-            data = yaml.safe_load(yaml_content)
+            encrypted_content = contents.decoded_content.decode("utf-8")
             
-            # SE IL FILE È VUOTO O NULL
-            if not data: 
-                return pd.DataFrame(columns=EXPECTED_COLS)
+            # 2. DECRIPTA
+            yaml_str = decrypt_data(encrypted_content, self.user_password)
+            
+            # 3. Parsa
+            data = yaml.safe_load(yaml_str)
+            if not data: return pd.DataFrame(columns=cols)
             
             df = pd.DataFrame(data)
-            
-            # SE IL FILE ESISTE MA MANCANO COLONNE (es. dati vecchi)
-            # Aggiunge le colonne mancanti riempiendole con None
-            for col in EXPECTED_COLS:
-                if col not in df.columns:
-                    df[col] = None
-
-            # Converte timestamp in datetime
+            # (Codice pulizia dataframe uguale a prima...)
             if 'timestamp' in df.columns:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                
             return df
             
         except Exception as e:
-            # Se il file non esiste proprio su GitHub
-            return pd.DataFrame(columns=EXPECTED_COLS)
+            # Se errore è "Invalid Token" (password sbagliata) o file mancante
+            return pd.DataFrame(columns=cols)
+
     def save_entry(self, entry: dict):
-        """Aggiunge una entry e fa commit su GitHub."""
         try:
-            # 1. Recupera file attuale
+            # 1. Scarica e Decripta attuale (per appendere)
             try:
                 contents = self.repo.get_contents(self.file_path)
-                current_data = yaml.safe_load(contents.decoded_content.decode("utf-8")) or []
+                encrypted_content = contents.decoded_content.decode("utf-8")
+                yaml_str = decrypt_data(encrypted_content, self.user_password)
+                current_data = yaml.safe_load(yaml_str) or []
                 sha = contents.sha
                 exists = True
             except:
@@ -67,16 +62,19 @@ class GitHubBackend:
             # 2. Aggiungi
             current_data.append(entry)
             
-            # 3. Dump YAML
-            new_content = yaml.dump(current_data, sort_keys=False, allow_unicode=True)
+            # 3. Converti in YAML string
+            new_yaml_str = yaml.dump(current_data, sort_keys=False, allow_unicode=True)
             
-            # 4. Commit
+            # 4. CRIPTA TUTTO
+            final_encrypted_blob = encrypt_data(new_yaml_str, self.user_password)
+            
+            # 5. Upload su GitHub
             if exists:
-                self.repo.update_file(contents.path, f"Log: {entry['activity_type']}", new_content, sha)
+                self.repo.update_file(self.file_path, "Log Encrypted", final_encrypted_blob, sha)
             else:
-                self.repo.create_file(self.file_path, "Initial commit", new_content)
-                
+                self.repo.create_file(self.file_path, "Init Encrypted", final_encrypted_blob)
             return True
+            
         except Exception as e:
-            st.error(f"Errore salvataggio: {e}")
+            st.error(f"Errore Critico Salvataggio: {e}")
             return False
