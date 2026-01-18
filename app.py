@@ -88,11 +88,24 @@ with tab_log:
         submitted = st.form_submit_button("Salva su GitHub 🚀", type="primary")
         
         if submitted:
+            # 1. Recupera la data personalizzata se esiste, altrimenti usa oggi
+            if "custom_date" in data_collected:
+                # Combina la data scelta con l'ora attuale (per mantenere l'ordine cronologico preciso)
+                chosen_date = data_collected["custom_date"]
+                current_time = datetime.now().time()
+                final_timestamp = datetime.combine(chosen_date, current_time).strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Rimuovi la chiave temporanea 'custom_date' per non salvarla sporca nel DB
+                del data_collected["custom_date"]
+            else:
+                final_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # 2. Costruisci l'entry
             entry = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp": final_timestamp,
                 "activity_type": selected_name,
                 "note": notes,
-                **data_collected
+                **data_collected # Qui dentro ora c'è anche 'pagine_totali'
             }
             
             with st.spinner("Salvataggio in corso..."):
