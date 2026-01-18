@@ -85,6 +85,8 @@ with tab_log:
             del st.session_state['prefill_activity']
 
         notes = st.text_area("Note", height=80)
+        # ... dentro app.py ...
+        
         submitted = st.form_submit_button("Salva su GitHub 🚀", type="primary")
         
         if submitted:
@@ -109,6 +111,7 @@ with tab_log:
             }
             
             with st.spinner("Salvataggio in corso..."):
+                # ... resto del codice di salvataggio uguale a prima ...
                 if backend.save_entry(entry):
                     st.success("Salvato!")
                     del st.session_state['data_snapshot'] # Invalida cache locale
