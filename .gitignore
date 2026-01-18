@@ -1,0 +1,8 @@
+# Ignora file di configurazione segreti e cache
+.streamlit/secrets.toml
+__pycache__/
+*.py[cod]
+venv/
+.env
+.DS_Store
+data.yaml
