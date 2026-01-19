@@ -12,97 +12,137 @@ class BaseActivity(ABC):
     def render_ui(self, history_df: pd.DataFrame) -> dict: pass
 
 # --- NUOVA VERSIONE LETTURA ---
+# --- NUOVA VERSIONE LETTURA (CON GESTIONE STATO) ---
 class ReadingActivity(BaseActivity):
     name = "📚 Lettura"
 
+    def _analyze_library(self, df: pd.DataFrame):
+        """
+        Analizza il DataFrame e restituisce:
+        1. active_books: Dizionario {titolo: {'letti': X, 'totali': Y}} per i libri in corso.
+        2. finished_books: Lista di titoli completati.
+        """
+        active_books = {}
+        finished_books = []
+
+        if df.empty or 'dettaglio' not in df.columns:
+            return active_books, finished_books
+
+        # Filtra solo attività di lettura
+        reading_df = df[df['activity_type'] == self.name]
+        unique_titles = reading_df['dettaglio'].dropna().unique()
+
+        for title in unique_titles:
+            book_logs = reading_df[reading_df['dettaglio'] == title]
+            
+            # Calcolo Pagine Lette (Somma metriche)
+            read_so_far = book_logs['metrica'].sum()
+            
+            # Calcolo Pagine Totali (Prendi il massimo dichiarato)
+            total_pages = 0
+            if 'pagine_totali' in book_logs.columns:
+                total_pages = book_logs['pagine_totali'].max()
+                if pd.isna(total_pages): total_pages = 0
+            
+            # Logica di Smistamento
+            if total_pages > 0 and read_so_far >= total_pages:
+                finished_books.append(title)
+            else:
+                active_books[title] = {
+                    'letti': int(read_so_far),
+                    'totali': int(total_pages)
+                }
+        
+        return active_books, finished_books
+
     def render_ui(self, df: pd.DataFrame):
-        # 1. SELEZIONE DATA
+        # 1. ANALISI AUTOMATICA LIBRARY
+        active_books, finished_books = self._analyze_library(df)
+        
+        # 2. UI SELEZIONE
+        st.write(f"📊 **Statistiche:** {len(active_books)} In lettura | {len(finished_books)} Finiti")
+        
         log_date = st.date_input("Data Lettura", value=date.today())
         
-        # 2. RECUPERO DATI STORICI
-        existing_books = []
-        book_metadata = {} 
-        
-        if not df.empty and 'dettaglio' in df.columns:
-            reading_df = df[df['activity_type'] == self.name]
-            existing_books = reading_df['dettaglio'].dropna().unique().tolist()
-            
-            if 'pagine_totali' in df.columns:
-                for book in existing_books:
-                    try:
-                        max_p = reading_df[reading_df['dettaglio'] == book]['pagine_totali'].max()
-                        if pd.notna(max_p) and max_p > 0:
-                            book_metadata[book] = int(max_p)
-                    except:
-                        pass
-
-        # 3. INTERFACCIA SELEZIONE
-        col_mode, col_book = st.columns([1, 2])
-        
-        with col_mode:
-            mode = st.radio("Libro", ["In Corso", "Nuovo"], label_visibility="collapsed")
+        # Modalità: "Leggo" (solo attivi) o "Nuovo" (inizia da zero)
+        mode = st.radio("Azione", ["📖 Leggo Pagine", "✨ Nuovo Libro"], horizontal=True)
         
         selected_title = None
-        current_total_pages_val = 0
+        total_pages_val = 0
+        read_previous = 0
 
-        with col_book:
-            if mode == "In Corso":
-                if existing_books:
-                    selected_title = st.selectbox("Seleziona Titolo", existing_books)
-                    current_total_pages_val = book_metadata.get(selected_title, 0)
-                else:
-                    st.warning("⚠️ Nessun libro in storico. Seleziona 'Nuovo'.")
-            else:
-                selected_title = st.text_input("Inserisci Titolo Nuovo Libro")
-                current_total_pages_val = 0
+        # --- CASO A: LEGGO PAGINE (Solo libri In Corso) ---
+        if mode == "📖 Leggo Pagine":
+            if not active_books:
+                st.warning("⚠️ Non hai libri in corso! Inizia un 'Nuovo Libro'.")
+                return {"custom_date": log_date}
+            
+            selected_title = st.selectbox("Libro in corso", list(active_books.keys()))
+            
+            # Recupera dati dalla nostra analisi
+            book_data = active_books[selected_title]
+            total_pages_val = book_data['totali']
+            read_previous = book_data['letti']
+
+            # Mostra info statiche
+            st.info(f"Stai leggendo: **{selected_title}** ({read_previous}/{total_pages_val} pag.)")
+
+        # --- CASO B: NUOVO LIBRO ---
+        else:
+            c_title, c_tot = st.columns([2, 1])
+            with c_title:
+                selected_title = st.text_input("Titolo Nuovo Libro")
+                # Controllo se esiste già nei finiti o attivi
+                if selected_title in finished_books:
+                    st.error("⚠️ Questo libro risulta già letto e finito!")
+                    return {"custom_date": log_date, "is_valid": False}
+                if selected_title in active_books:
+                    st.warning(f"⚠️ Questo libro è già in corso ({active_books[selected_title]['letti']} pag). Usa l'altra tab per aggiornarlo.")
+            
+            with c_tot:
+                total_pages_val = st.number_input("Pagine Totali", min_value=1, step=1)
+            
+            read_previous = 0 # È nuovo
 
         if not selected_title:
             return {"custom_date": log_date}
 
-        # 4. INPUT DATI NUMERICI
-        st.write("---")
-        c1, c2 = st.columns(2)
+        st.divider()
+
+        # 3. INPUT LETTURA ODIFIERNA
+        # Se è un libro attivo, mostriamo le pagine totali disabilitate (solo lettura)
+        # Se è nuovo, permettiamo di modificarle (gestito sopra nel layout colonne)
         
-        with c1:
-            total_pages = st.number_input(
-                "Pagine Totali Libro", 
-                min_value=0, 
-                step=1,
-                value=current_total_pages_val
-            )
+        pages_today = st.number_input("Pagine lette oggi", min_value=1, step=1)
 
-        with c2:
-            pages_read = st.number_input("Pagine lette oggi", min_value=1, step=1)
-
-        # 5. BARRA DI PROGRESSO (SOLO SE "IN CORSO")
-        # La visualizziamo solo se siamo in modalità aggiornamento E abbiamo le pagine totali
-        if mode == "In Corso" and total_pages > 0:
-            already_read = 0
+        # 4. VALIDAZIONE E PROGRESSO
+        is_valid = True
+        
+        if total_pages_val > 0:
+            new_total = read_previous + pages_today
             
-            # Calcolo storico preciso
-            if not df.empty and 'dettaglio' in df.columns:
-                subset = df[(df['activity_type'] == self.name) & (df['dettaglio'] == selected_title)]
-                already_read = subset['metrica'].sum()
-            
-            # Totale cumulativo (Storia + Oggi)
-            cumulative_total = already_read + pages_read
-            
-            # Calcolo percentuale
-            pct = (cumulative_total / total_pages) * 100
-            display_pct = min(pct, 100.0)
-            
-            st.info(f"📈 Situazione: Avevi letto **{int(already_read)}** pagine. Con oggi arrivi a **{int(cumulative_total)}**.")
-            st.progress(display_pct / 100, text=f"Progresso Totale: {int(display_pct)}%")
-            
-            if cumulative_total >= total_pages:
-                st.success("🏆 Complimenti! Libro completato.")
+            # Validazione
+            if new_total > total_pages_val:
+                diff = new_total - total_pages_val
+                st.error(f"⛔ Errore: Sfori di {diff} pagine! ({new_total}/{total_pages_val})")
+                is_valid = False
+            else:
+                # Barra Progresso
+                pct = (new_total / total_pages_val) * 100
+                st.progress(pct/100, text=f"Avanzamento: {int(pct)}%")
+                
+                # Feedback completamento
+                if new_total == total_pages_val:
+                    st.balloons()
+                    st.success(f"🏆 COMPLETI IL LIBRO OGGI! Verrà spostato nella collezione 'Finiti'.")
 
         return {
             "dettaglio": selected_title,
-            "metrica": pages_read,
+            "metrica": pages_today,
             "unita": "pagine",
-            "pagine_totali": total_pages,
-            "custom_date": log_date
+            "pagine_totali": total_pages_val,
+            "custom_date": log_date,
+            "is_valid": is_valid
         }
 # --- LE ALTRE CLASSI RIMANGONO UGUALI (Sport, Movie, ecc) ---
 # Assicurati di includere anche le altre classi qui sotto o lasciarle invariate
@@ -114,7 +154,7 @@ class SportActivity(BaseActivity):
         log_date = st.date_input("Data Sport", value=date.today())
         types = ["Palestra", "Corsa", "Nuoto", "Yoga", "Bici"]
         detail = st.selectbox("Tipo", types)
-        metric = st.number_input("Minuti", step=5, min_value=5)
+        metric = st.number_input("Minuti", step=15, min_value=5)
         return {"dettaglio": detail, "metrica": metric, "unita": "minuti", "custom_date": log_date}
 
 class MovieActivity(BaseActivity):
